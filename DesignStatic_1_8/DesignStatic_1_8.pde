@@ -1,9 +1,10 @@
 import java.io.File;
+import javax.swing.JOptionPane;
 
 // =========================================================
 // GLOBAL CONSTANTS & ENUMS
 // =========================================================
-final int UI_HEIGHT = 50;
+final int UI_HEIGHT = 60; // Increased slightly for better spacing
 final int CANVAS_WIDTH = 600;
 final int CANVAS_HEIGHT = 650;
 
@@ -13,18 +14,15 @@ enum ToolType { PEN, FILL, DESIGN, RECT, CHEMISTRY, ERASER, IMAGE_PEN }
 // MAIN SKETCH
 // =========================================================
 
-// Systems
 AppState state;
 UIManager ui;
 ToolManager tools;
 FileManager fileManager;
 
-// Images
 PImage loadedImage;
 PImage backgroundImage;
 PImage penImage;
 
-// Helper variables for mouse movement calculations
 int mouseDirY = 0;
 int mouseDirX = 0;
 color currentPixelColor, prevPixelColor;
@@ -34,7 +32,7 @@ void setup() {
   surface.setResizable(true);
   frameRate(120);
   rectMode(CORNER);
-  noSmooth(); // Preserving the pixelated look from original code
+  noSmooth(); 
 
   // Initialize Systems
   state = new AppState();
@@ -42,31 +40,30 @@ void setup() {
   tools = new ToolManager();
   fileManager = new FileManager();
   
-  // Random start background
   state.randomizeBgColor();
   background(state.bgColor);
 }
 
 void draw() {
-  // 1. Blend Mode Handling
+  // Blend Mode
   if (state.blendModeIndex == 0) blendMode(BLEND);
   else setBlendMode(state.blendModeIndex);
 
-  // 2. Track Colors & Mouse Direction for specific brushes
+  // Updates
   currentPixelColor = get(mouseX, mouseY);
   prevPixelColor = get(pmouseX, pmouseY);
   updateMouseDirection();
 
-  // 3. Draw UI (Always draws on top)
+  // Draw UI (Always on top, no blend mode)
+  blendMode(BLEND);
   ui.drawUI();
   
-  // 4. Handle loaded images
+  // Handle Images
   if (state.shouldLoadImage && loadedImage != null) {
     image(loadedImage, width/2 - loadedImage.width/2, height/2 - loadedImage.height/2);
     state.shouldLoadImage = false;
   }
   
-  // 5. Decrement Timers
   ui.updateTimers();
 }
 
@@ -75,31 +72,24 @@ void draw() {
 // =========================================================
 
 void mousePressed() {
-  // Check if clicking UI
   if (mouseY < UI_HEIGHT) {
     ui.handleMousePress();
     return;
   }
-
-  // Right Click: Color Picker
   if (mouseButton == RIGHT) {
     color c = get(mouseX, mouseY);
     state.setPenColor(c);
     return;
   }
-
-  // Left Click: Drawing Tools
   if (mouseButton == LEFT) {
     tools.handlePress();
   }
 }
 
 void mouseDragged() {
-  // Update oil thickness logic from original code
   state.oilThickness -= 0.05;
   if (state.oilThickness < 0.1) state.oilThickness = 0.0;
 
-  // Pen pixel skipping logic
   state.penPixelCounter -= 1;
   if (state.penPixelCounter < 0) {
     state.penPixelCounter = 15;
@@ -112,7 +102,7 @@ void mouseDragged() {
 }
 
 void mouseReleased() {
-  state.oilThickness = 4; // Reset oil
+  state.oilThickness = 4;
   tools.handleRelease();
 }
 
@@ -122,23 +112,21 @@ void mouseMoved() {
 
 void mouseWheel(MouseEvent event) {
   float e = event.getCount();
-  state.isWritingHex = false; // Cancel writing if wheeling
-  state.adjustPenColor(e * -2); // Inverted direction to match original
+  state.isWritingHex = false;
+  state.adjustPenColor(e * -2);
 }
 
 void mouseClicked() {
-  // Trigger Hex writing mode
-  if (mouseButton == LEFT && mouseX < 60 && mouseX > 2 && mouseY < 48) {
+  // Trigger Hex writing mode if clicked on the hex box
+  if (mouseButton == LEFT && mouseX > 60 && mouseX < 130 && mouseY > 35 && mouseY < 55) {
     state.isWritingHex = true;
     state.hexInput = "";
   }
 }
 
 void keyPressed() {
-  // 1. Text Input for Colors
-  if (state.isWritingHex) return; // Logic handled in keyTyped
+  if (state.isWritingHex) return; 
 
-  // 2. Global Key Commands
   if (key == ' ') handleReset();
   if (key == CODED) {
     if (keyCode == CONTROL) fileManager.quickSave();
@@ -146,9 +134,9 @@ void keyPressed() {
       state.randomizeBgColor();
       background(state.bgColor);
     }
+    if (keyCode == SHIFT) state.randomizePenColor();
   }
 
-  // 3. Tool Selection Hotkeys
   if (key == 'q') state.currentTool = ToolType.PEN;
   if (key == 'w') state.currentTool = ToolType.FILL;
   if (key == 'e') state.currentTool = ToolType.DESIGN;
@@ -157,38 +145,32 @@ void keyPressed() {
   if (key == 'd') state.currentTool = ToolType.ERASER;
   if (key == 'f') state.currentTool = ToolType.IMAGE_PEN;
 
-  // 4. Sub-Tool Switching (1, 2, 3, 4)
   if (key >= '1' && key <= '4') {
     state.subToolMode = int(String.valueOf(key));
   }
   
-  // 5. Parameter Adjustments (+, -, s, a, c, x)
   handleParameterAdjustments();
 
-  // 6. File & Misc Commands
   if (key == 'v') fileManager.selectImageForLoad(false);
-  if (key == 'm') fileManager.selectImageForLoad(true); // BG Image
+  if (key == 'm') fileManager.selectImageForLoad(true); 
   if (key == 'j') state.isBgImageActive = false;
   if (key == 'k') state.isLocked = true;
   if (key == 'l') state.isLocked = false;
   if (key == 'g') fileManager.selectImageForPen();
   if (key == 'n') fileManager.saveCustomLocation();
   if (key == 'b') fileManager.saveTransparent();
-  if (key == 'o') state.setPenColor(color(255)); // White
-  if (key == 'p') state.setPenColor(color(0));   // Black
+  if (key == 'o') state.setPenColor(color(255)); 
+  if (key == 'p') state.setPenColor(color(0));   
   
-  // 7. Blend Modes
   if (key == 'y') {
     state.blendModeIndex++;
     if (state.blendModeIndex > 9) state.blendModeIndex = 0;
   }
   
-  // Specific toggles
   if (key == TAB) {
     if (state.currentTool == ToolType.CHEMISTRY) {
       if (state.subToolMode == 1) state.chemistrySwitchR++;
       if (state.chemistrySwitchR > 4) state.chemistrySwitchR = 1;
-      
       if (state.subToolMode == 4) state.switchS = !state.switchS;
     }
   }
@@ -226,7 +208,6 @@ void handleReset() {
     surface.setSize(600, 650);
     background(state.bgColor);
   }
-  // Reset Params
   state.rectSize = 33.0;
   state.chemistryAlpha = 60.0;
   state.bezierWeight = 6;
@@ -243,8 +224,7 @@ void handleParameterAdjustments() {
   if (state.currentTool == ToolType.CHEMISTRY) {
     if (up && state.chemistryAlpha <= 200) state.chemistryAlpha += 3;
     if (down && state.chemistryAlpha >= 4) state.chemistryAlpha -= 3;
-    
-    if (state.subToolMode == 3) { // Bezier weight
+    if (state.subToolMode == 3) { 
       if (key == 'c' && state.bezierWeight <= 26) state.bezierWeight++;
       if (key == 'x' && state.bezierWeight >= 1) state.bezierWeight--;
     }
@@ -286,15 +266,12 @@ int sgn(float f) {
 // CLASS: APP STATE
 // =========================================================
 class AppState {
-  // Colors
   color bgColor;
   color penColor;
   
-  // Tools
   ToolType currentTool = ToolType.PEN;
-  int subToolMode = 1; // 1, 2, 3, 4
+  int subToolMode = 1; 
   
-  // Tool Settings
   float penSize = 6;
   float rectSize = 33.0;
   float rectStroke = 1.0;
@@ -304,7 +281,6 @@ class AppState {
   float splashWidth = 30;
   float splashConcentration = 8;
   
-  // Geometry / Logic
   PVector penStart = new PVector(0,0);
   PVector shapeStart = new PVector(300, 300);
   PVector eraserStart = new PVector(300, 300);
@@ -313,12 +289,10 @@ class AppState {
   int chemistrySwitchR = 1;
   boolean switchS = false;
   
-  // Arrays for Fill Tool (Polygon)
   int[] verticesX = new int[50];
   int[] verticesY = new int[50];
   int vertIndex = 0;
   
-  // System Flags
   boolean isWritingHex = false;
   String hexInput = "";
   boolean isLocked = false;
@@ -355,158 +329,250 @@ class AppState {
 }
 
 // =========================================================
-// CLASS: UI MANAGER
+// CLASS: UI MANAGER & VISUALS
 // =========================================================
 class UIManager {
   float saveMsgTimer = 0;
   float loadMsgTimer = 0;
   
-  // Highlight colors for buttons
-  color cLoad, cSave, cQuick, cTrans;
+  // Theme Colors
+  color colBg = color(40, 40, 40);
+  color colPanel = color(60, 60, 60);
+  color colActive = color(59, 149, 214); // Blue accent
+  color colText = color(220);
+  color colHover = color(80, 80, 80);
+  
+  ArrayList<UIButton> buttons;
+
+  UIManager() {
+    buttons = new ArrayList<UIButton>();
+    // Tools
+    buttons.add(new UIButton(ToolType.PEN, 200, 10));
+    buttons.add(new UIButton(ToolType.FILL, 250, 10));
+    buttons.add(new UIButton(ToolType.DESIGN, 300, 10));
+    buttons.add(new UIButton(ToolType.RECT, 350, 10));
+    buttons.add(new UIButton(ToolType.CHEMISTRY, 400, 10));
+    buttons.add(new UIButton(ToolType.ERASER, 450, 10));
+    
+    // File Actions (Using pseudo-tooltypes for detection, handled manually)
+    // We will just draw these manually or add specific buttons if we wanted full OOP
+  }
   
   void drawUI() {
-    blendMode(BLEND);
-    strokeWeight(1);
-    stroke(0);
+    // Background Bar
+    noStroke();
+    fill(colBg);
+    rect(0, 0, width, UI_HEIGHT);
     
-    // Background bar
-    fill(state.penColor); // Using pen color for UI bg (from original code logic pc1,pc2,pc3)
-    rect(0, 0, width, 49);
+    // Color Section
+    drawColorSection();
     
-    // Color Preview Circle
-    stroke(0);
+    // Separators
+    stroke(80);
+    line(180, 10, 180, 50);
+    line(490, 10, 490, 50);
+
+    // Tools
+    for (UIButton b : buttons) {
+      b.update();
+      b.display();
+    }
+    
+    // File Buttons
+    drawFileButtons();
+    
+    // Messages
+    fill(colText);
+    textSize(10);
+    textAlign(RIGHT);
+    if (saveMsgTimer > 0) text("Saved.", width - 10, 50);
+    else if (loadMsgTimer > 0) text("Loaded.", width - 10, 50);
+    textAlign(LEFT);
+  }
+  
+  void drawColorSection() {
+    // Color Preview
+    fill(colPanel);
+    rect(10, 10, 40, 40, 5);
+    
     fill(state.penColor);
-    circle(124, 23, 30);
+    noStroke();
+    circle(30, 30, 24);
     
-    // Text Labels
-    fill(0);
-    textSize(21);
-    text("Pen Color : ", 8, 30);
-    text("Tools : ", 148, 30);
+    // Hex Input
+    fill(state.isWritingHex ? colActive : colPanel);
+    rect(60, 18, 70, 24, 4);
     
-    // Hex Input Box
+    fill(colText);
     textSize(12);
-    if (state.isWritingHex) {
-      fill(0);
-      rect(7, 32, 50, 12);
-      fill(255);
-      text("#", 10, 42);
-      text(state.hexInput.toUpperCase(), 15, 42);
-      
-      // Check if done typing
-      if (state.hexInput.length() == 6) {
+    textAlign(LEFT, CENTER);
+    String label = state.isWritingHex ? "#" + state.hexInput.toUpperCase() : "#" + hex(state.penColor, 6);
+    if(state.isWritingHex && frameCount % 60 < 30) label += "|"; // Cursor
+    text(label, 65, 29);
+    
+    // Helper Text
+    fill(120);
+    textSize(9);
+    text("R-Click: Pick", 60, 50);
+    
+    // Update Hex Logic
+    if (state.isWritingHex && state.hexInput.length() == 6) {
         int hi = unhex(state.hexInput.toUpperCase());
         state.penColor = color(red(hi), green(hi), blue(hi));
         state.isWritingHex = false;
-      }
-    } else {
-       text("#" + hex(state.penColor, 6), 10, 42);
     }
+  }
+  
+  void drawFileButtons() {
+    drawMiniButton("LOAD", 500, 10, 40, 18, "L");
+    drawMiniButton("SAVE", 545, 10, 40, 18, "S");
+    drawMiniButton("QUICK", 500, 32, 40, 18, "Q");
+    drawMiniButton("PNG", 545, 32, 40, 18, "T");
+  }
+  
+  void drawMiniButton(String label, int x, int y, int w, int h, String shortKey) {
+    boolean hover = mouseX > x && mouseX < x+w && mouseY > y && mouseY < y+h;
     
-    // Save/Load Feedback messages
-    if (saveMsgTimer > 0) { textSize(12); fill(0); text("Design saved", 136, 40); }
-    if (loadMsgTimer > 0) { textSize(12); fill(0); text("Image loaded", 136, 40); }
+    fill(hover ? colHover : colPanel);
+    stroke(0);
+    rect(x, y, w, h, 3);
     
-    drawFileButtons();
-    drawToolIcons();
+    fill(colText);
+    textSize(9);
+    textAlign(CENTER, CENTER);
+    text(label, x + w/2, y + h/2);
+    textAlign(LEFT); // Reset
   }
   
   void updateTimers() {
     if (saveMsgTimer > 0) saveMsgTimer--;
     if (loadMsgTimer > 0) loadMsgTimer--;
-    
-    // Sewing tool countdown
     if (mousePressed) {
       state.sewingCountdown--;
       if (state.sewingCountdown < 0) state.sewingCountdown = 5;
     }
   }
   
-  void drawFileButtons() {
-    // Hover detection logic
-    boolean overLoad = mouseX > 498 && mouseX < 514 && mouseY > 5 && mouseY < 22;
-    boolean overSave = mouseX > 517 && mouseX < 533 && mouseY > 5 && mouseY < 22;
-    boolean overQuick = mouseX > 498 && mouseX < 514 && mouseY > 24 && mouseY < 40;
-    boolean overTrans = mouseX > 517 && mouseX < 533 && mouseY > 24 && mouseY < 40;
+  void handleMousePress() {
+    // Color click
+    if (mouseX > 10 && mouseX < 50) state.randomizePenColor();
     
-    cLoad = overLoad ? color(100) : color(0);
-    cSave = overSave ? color(100) : color(0);
-    cQuick = overQuick ? color(100) : color(0);
-    cTrans = overTrans ? color(100) : color(0);
-    
-    // Tooltip logic
-    textSize(8); fill(0);
-    if (overLoad) text("Load image", 491, 47);
-    if (overSave) text("Save custom", 491, 47);
-    if (overQuick) text("Quick Save", 491, 47);
-    if (overTrans) text("Transparent BG", 491, 47);
-    
-    // Draw Icons
-    fill(cLoad); rect(498, 5, 16, 16); fill(255); textSize(11); text("L", 504, 16);
-    fill(cSave); rect(517, 5, 16, 16); fill(255); textSize(11); text("S", 522, 16);
-    fill(cQuick); rect(498, 24, 16, 16); fill(255); textSize(10); text("qS", 501, 36);
-    fill(cTrans); rect(517, 24, 16, 16); fill(255); textSize(10); text("BG", 519, 36);
-  }
-  
-  void drawToolIcons() {
-    // Determine Highlight Levels
-    float[] hl = new float[6]; // Pen, Fill, Design, Rect, Chem, Eraser
-    ToolType[] types = {ToolType.PEN, ToolType.FILL, ToolType.DESIGN, ToolType.RECT, ToolType.CHEMISTRY, ToolType.ERASER};
-    
-    for(int i=0; i<6; i++) {
-      if (state.currentTool == types[i]) {
-        if (state.subToolMode == 1) hl[i] = 100;
-        else if (state.subToolMode == 2) hl[i] = 150;
-        else if (state.subToolMode == 3) hl[i] = 200;
-        else if (state.subToolMode == 4) hl[i] = 220;
-        else hl[i] = 150;
-      } else {
-        hl[i] = 0; 
+    // Tools
+    for (UIButton b : buttons) {
+      if (b.isHovered()) {
+        state.currentTool = b.type;
+        return; 
       }
     }
     
-    // Mouse Over Highlights (Visual Only)
-    if (mouseY < 50) {
-      if (mouseX > 215 && mouseX < 245) hl[0] = 150;
-      if (mouseX > 255 && mouseX < 290) hl[1] = 150;
-      if (mouseX > 300 && mouseX < 355) hl[2] = 150;
-      if (mouseX > 365 && mouseX < 415) hl[3] = 150;
-      if (mouseX > 425 && mouseX < 475) hl[4] = 150;
-      if (mouseX > 563 && mouseX < 588) hl[5] = 150;
+    // File Actions (Hardcoded coords for simplicity)
+    if (mouseY > 10 && mouseY < 28) {
+      if (mouseX > 500 && mouseX < 540) fileManager.selectImageForLoad(false); // Load
+      if (mouseX > 545 && mouseX < 585) fileManager.saveCustomLocation(); // Save
     }
-
-    strokeWeight(1); stroke(0);
-    
-    // Pen
-    fill(hl[0]); rect(215, 10, 30, 30); fill(255); textSize(11); text("pen", 220, 30);
-    // Fill
-    fill(hl[1]); circle(275, 25, 35); fill(255); textSize(12); text("FILL", 264, 30);
-    // Design
-    fill(hl[2]); arc(325, 40, 50, 60, PI, TWO_PI); fill(255); textSize(11); text("design", 306, 33);
-    // Rect
-    fill(hl[3]); rect(365, 5, 50, 35); fill(255); textSize(12); text("RECT", 374, 30);
-    // Chemistry
-    fill(hl[4]); rect(443, 5, 15, 25, 18); rect(425, 20, 50, 20, 28); fill(255); textSize(10); text("chemistry", 427, 33);
-    // Eraser
-    fill(255); arc(577, 20, 31, 32, PI, TWO_PI); fill(hl[5]); rect(561, 15, 32, 23); fill(255); textSize(10); text("eraser", 563, 33);
+    if (mouseY > 32 && mouseY < 50) {
+      if (mouseX > 500 && mouseX < 540) fileManager.quickSave(); // Quick
+      if (mouseX > 545 && mouseX < 585) fileManager.saveTransparent(); // PNG
+    }
   }
   
-  void handleMousePress() {
-    if (mouseX > 105 && mouseX < 139 && mouseY > 9 && mouseY < 36) state.randomizePenColor();
+  // --- BUTTON INNER CLASS ---
+  class UIButton {
+    ToolType type;
+    int x, y, w, h;
     
-    if (mouseX > 498 && mouseX < 514 && mouseY > 5 && mouseY < 22) fileManager.selectImageForLoad(false);
-    if (mouseX > 517 && mouseX < 533 && mouseY > 5 && mouseY < 22) fileManager.saveCustomLocation();
-    if (mouseX > 498 && mouseX < 514 && mouseY > 24 && mouseY < 40) fileManager.quickSave();
-    if (mouseX > 517 && mouseX < 533 && mouseY > 24 && mouseY < 40) fileManager.saveTransparent();
+    UIButton(ToolType t, int _x, int _y) {
+      type = t;
+      x = _x; y = _y;
+      w = 40; h = 40;
+    }
     
-    // Tool Selection by Mouse
-    if (mouseY < 46) {
-      if (mouseX > 215 && mouseX < 245) state.currentTool = ToolType.PEN;
-      if (mouseX > 255 && mouseX < 290) state.currentTool = ToolType.FILL;
-      if (mouseX > 300 && mouseX < 355) state.currentTool = ToolType.DESIGN;
-      if (mouseX > 365 && mouseX < 415) state.currentTool = ToolType.RECT;
-      if (mouseX > 425 && mouseX < 475) state.currentTool = ToolType.CHEMISTRY;
-      if (mouseX > 563 && mouseX < 588) state.currentTool = ToolType.ERASER;
+    boolean isHovered() {
+      return mouseX > x && mouseX < x + w && mouseY > y && mouseY < y + h;
+    }
+    
+    void update() {}
+    
+    void display() {
+      boolean active = state.currentTool == type;
+      boolean hover = isHovered();
+      
+      // Base
+      noStroke();
+      if (active) fill(colPanel);
+      else if (hover) fill(colHover);
+      else fill(colBg);
+      
+      // Active Indicator (Border or background)
+      if (active) {
+        stroke(colActive);
+        strokeWeight(2);
+        rect(x, y, w, h, 5);
+        noStroke();
+      } else {
+        // Just rounded bg
+        if (hover) rect(x, y, w, h, 5);
+      }
+      
+      // Icon
+      stroke(active ? colActive : colText);
+      strokeWeight(1.5);
+      noFill();
+      drawIcon(type, x + w/2, y + h/2);
+      
+      // Sub-tool Dots
+      if (active) {
+        noStroke();
+        fill(colActive);
+        int dots = state.subToolMode;
+        float startX = x + w/2 - ((dots-1)*4)/2.0;
+        for(int i=0; i<dots; i++) {
+          circle(startX + i*4, y + h - 5, 2);
+        }
+      }
+    }
+  }
+  
+  void drawIcon(ToolType t, float cx, float cy) {
+    switch(t) {
+      case PEN:
+        line(cx-5, cy+5, cx+5, cy-5);
+        line(cx-5, cy+5, cx-7, cy+7); // Tip
+        break;
+      case FILL:
+        beginShape();
+        vertex(cx-6, cy-4); vertex(cx+6, cy-4);
+        vertex(cx+4, cy+6); vertex(cx-4, cy+6);
+        endShape(CLOSE);
+        line(cx, cy-4, cx, cy-8); // Handle
+        break;
+      case DESIGN:
+        circle(cx, cy, 10);
+        line(cx-6, cy, cx+6, cy);
+        line(cx, cy-6, cx, cy+6);
+        break;
+      case RECT:
+        rect(cx-6, cy-4, 12, 8);
+        break;
+      case CHEMISTRY:
+        beginShape();
+        vertex(cx-3, cy-6); vertex(cx+3, cy-6);
+        vertex(cx+5, cy+6); vertex(cx-5, cy+6);
+        endShape(CLOSE);
+        break;
+      case ERASER:
+        rectMode(CENTER);
+        pushMatrix();
+        translate(cx, cy);
+        rotate(PI/4);
+        rect(0, 0, 12, 6);
+        popMatrix();
+        rectMode(CORNER);
+        break;
+      case IMAGE_PEN:
+        rect(cx-5, cy-5, 10, 10);
+        point(cx, cy);
+        break;
     }
   }
 }
@@ -517,12 +583,10 @@ class UIManager {
 class ToolManager {
   
   void handlePress() {
-    // Initial dots or setup for tools
-    if (mouseY > 60) {
+    if (mouseY > UI_HEIGHT + 10) {
       if (state.currentTool == ToolType.PEN) {
          stroke(state.penColor); strokeWeight(state.penSize); point(mouseX, mouseY);
       }
-      
       if (state.currentTool == ToolType.DESIGN) {
         stroke(state.penColor); strokeWeight(1);
         if (state.subToolMode == 1) {
@@ -533,7 +597,6 @@ class ToolManager {
            line(mouseX-66, mouseY-66, mouseX+66, mouseY+66);
         }
       }
-      
       if (state.currentTool == ToolType.RECT) drawRectLogic();
       if (state.currentTool == ToolType.ERASER) drawEraserLogic();
       if (state.currentTool == ToolType.CHEMISTRY) drawChemistryLogic();
@@ -542,8 +605,6 @@ class ToolManager {
         image(penImage, mouseX - penImage.width/2, mouseY - penImage.height/2);
       }
     }
-    
-    // Set start points
     state.shapeStart.set(mouseX, mouseY);
     state.eraserStart.set(mouseX, mouseY);
   }
@@ -560,37 +621,26 @@ class ToolManager {
          if (penImage != null) image(penImage, mouseX - penImage.width/2, mouseY - penImage.height/2);
          break;
      }
-     
-     // Update start points continuously
-     state.shapeStart.set(mouseX, mouseY);
-     state.eraserStart.set(mouseX, mouseY);
   }
   
   void handleRelease() {
     if (state.currentTool == ToolType.FILL) {
       beginShape(POINTS);
       tint(state.penColor);
-      for (int k = 0; k < state.vertIndex; k++) {
-        // Note: The original logic for vertex index (i, j) was slightly buggy/unused
-        // in the drag handler, but we keep the structure here.
-        // Since we aren't accumulating vertices in drag anymore (original was commented out),
-        // this is mostly a placeholder unless logic is restored.
-      }
+      for (int k = 0; k < state.vertIndex; k++) {} // Placeholder logic
       endShape(CLOSE);
     }
   }
 
-  // --- Drawing Logic Implementations ---
-  
   void drawPenDrag() {
     stroke(state.penColor);
-    if (state.subToolMode == 2) { // Standard Line
+    if (state.subToolMode == 2) { 
       strokeWeight(state.penSize);
       line(state.penStart.x, state.penStart.y, mouseX, mouseY);
-    } else if (state.subToolMode == 1) { // Smooth
+    } else if (state.subToolMode == 1) {
       strokeWeight(state.penSize);
       line(mouseX, mouseY, pmouseX, pmouseY);
-    } else if (state.subToolMode == 3) { // Sketchy
+    } else if (state.subToolMode == 3) {
       strokeWeight(state.penSize/2);
       for(int k=0; k<4; k++) {
         float r = random(4,8);
@@ -671,7 +721,6 @@ class ToolManager {
   
   void drawChemistryLogic() {
     stroke(state.penColor, state.chemistryAlpha);
-    
     if (state.subToolMode == 1) {
       strokeWeight(6);
       if (state.chemistrySwitchR == 1) line(mouseX+22, mouseY+22, pmouseX-22, pmouseY-22);
@@ -680,7 +729,7 @@ class ToolManager {
       if (state.chemistrySwitchR == 4) line(mouseX+31, mouseY, pmouseX-31, pmouseY);
     } else if (state.subToolMode == 2) {
       strokeWeight(6);
-      drawScratchLines(); // Reusing the scratch line logic from Eraser
+      drawScratchLines(); 
     } else if (state.subToolMode == 3) {
       strokeWeight(state.bezierWeight);
       bezier(mouseX, mouseY, pmouseX, pmouseY, mouseX, mouseY, pmouseX/1.5, pmouseY/1.5);
@@ -691,7 +740,6 @@ class ToolManager {
     }
   }
   
-  // Helper for duplicate scratch line logic
   void drawScratchLines() {
       line(mouseX, mouseY, pmouseX, pmouseY);
       line(mouseX+2, mouseY+5, pmouseX+2, pmouseY-5);
@@ -738,37 +786,59 @@ class FileManager {
     selectFolder("Select a folder to process:", "folderSelected");
   }
   
+  // New helper to get name from user
+  String promptForFilename() {
+    // This opens the small window
+    String name = JOptionPane.showInputDialog(null, "Enter file name:", "Save Image", JOptionPane.PLAIN_MESSAGE);
+    
+    // If user clicks "Cancel", name is null. We return null to signal abort.
+    if (name == null) return null;
+    
+    // If user clicks "OK" but typed nothing, generate a random name
+    if (name.trim().isEmpty()) return generateRandomFilename();
+    
+    return name;
+  }
+  
   void quickSave() {
-    String filename = generateRandomFilename();
+    String filename = promptForFilename();
+    if (filename == null) return; // User pressed Cancel
+    
     ui.saveMsgTimer = 300;
-    PImage temp = get(0, 50, 600, 600);
-    // Original path: dataPath
+    
+    // Capture canvas excluding UI
+    PImage temp = get(0, UI_HEIGHT, 600, 600);
+    
+    // Save to data folder
     temp.save(dataPath(filename + ".png"));
+    println("Saved as: " + filename + ".png");
   }
   
   void saveTransparent() {
-    String filename = generateRandomFilename();
+    String filename = promptForFilename();
+    if (filename == null) return; // User pressed Cancel
+    
     ui.saveMsgTimer = 300;
     
-    PImage canvas = get(0, 50, width, height-50);
+    PImage canvas = get(0, UI_HEIGHT, width, height-UI_HEIGHT);
     canvas.format = ARGB;
     canvas.loadPixels();
     color bg = state.bgColor;
     color transparent = color(0,0,0,0);
     
-    // Mask pixels
+    // Mask pixels to remove background color
     for(int i=0; i < canvas.pixels.length; i++) {
        if (canvas.pixels[i] == bg) canvas.pixels[i] = transparent;
     }
     canvas.updatePixels();
     
-    // Crop calculation
+    // Calculate crop bounds
     int minX = canvas.width, maxX = -1;
     int minY = canvas.height, maxY = -1;
     for (int y = 0; y < canvas.height; y++) {
       for (int x = 0; x < canvas.width; x++) {
         int i = y * canvas.width + x;
-        if ((canvas.pixels[i] & 0xFF000000) != 0) { // Check alpha
+        if ((canvas.pixels[i] & 0xFF000000) != 0) { 
           if (x < minX) minX = x;
           if (x > maxX) maxX = x;
           if (y < minY) minY = y;
@@ -777,12 +847,16 @@ class FileManager {
       }
     }
     
+    // Ensure "Sprites" folder exists or save to root
+    String path = "Sprites/" + filename + ".png";
+    
     if (maxX >= minX && maxY >= minY) {
       PImage cropped = canvas.get(minX, minY, maxX - minX + 1, maxY - minY + 1);
-      cropped.save(dataPath("Sprites/" + filename + ".png"));
+      cropped.save(dataPath(path));
     } else {
-      canvas.save(dataPath("Sprites/" + filename + ".png"));
+      canvas.save(dataPath(path));
     }
+    println("Saved transparent as: " + filename + ".png");
   }
 
   String generateRandomFilename() {
@@ -793,7 +867,7 @@ class FileManager {
 }
 
 // =========================================================
-// FILE CALLBACKS (Must be global)
+// FILE CALLBACKS
 // =========================================================
 
 void imageChosen(File f) {
@@ -817,9 +891,8 @@ void imageChosen(File f) {
 
 void folderSelected(File selection) {
   if (selection == null) return;
-  
   String filename = fileManager.generateRandomFilename();
-  PImage temp = get(0, 50, width, height-50);
+  PImage temp = get(0, UI_HEIGHT, width, height-UI_HEIGHT);
   temp.save(selection.getPath() + File.separator + filename + ".png");
   ui.saveMsgTimer = 300;
 }
