@@ -30,12 +30,18 @@ int mouseDirY = 0;
 int mouseDirX = 0;
 color currentPixelColor, prevPixelColor;
 
-void setup() {
+void settings() {
   size(600, 650);
+  // Keep drawing, colour picking and export crops in the same pixel space,
+  // including when the standalone app runs on a high-DPI display.
+  pixelDensity(1);
+  noSmooth(); // Preserve the pixelated look.
+}
+
+void setup() {
   surface.setResizable(true);
   frameRate(120);
   rectMode(CORNER);
-  noSmooth(); // Preserving the pixelated look from original code
 
   // Initialize Systems
   state = new AppState();
