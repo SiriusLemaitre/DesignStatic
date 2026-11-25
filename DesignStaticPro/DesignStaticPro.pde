@@ -96,7 +96,6 @@ void setup() {
   toolControls = new ToolControls();
   projectFiles = new ProjectFiles();
   sounds = new SoundEffects();
-  sounds.start();
 }
 
 @Override public void dispose() {

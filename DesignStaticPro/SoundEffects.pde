@@ -21,7 +21,7 @@ class SoundEffects {
   final long ADJUST_INTERVAL = 48000000L;
   final ScratchGesture gesture = new ScratchGesture();
   final ArrayBlockingQueue<SoundCue> pending = new ArrayBlockingQueue<SoundCue>(4);
-  volatile boolean enabled = true;
+  volatile boolean enabled;
   volatile boolean available = true;
   volatile ScratchMotion motion;
   boolean trackingPointer;
@@ -40,8 +40,12 @@ class SoundEffects {
     enabled = !enabled;
     pending.clear();
     endStroke();
-    LockSupport.unpark(player);
-    if (enabled) play(SoundCue.CLICK);
+    if (enabled) {
+      if (player == null) start();
+      play(SoundCue.CLICK);
+    } else {
+      LockSupport.unpark(player);
+    }
   }
 
   void play(SoundCue cue) {
