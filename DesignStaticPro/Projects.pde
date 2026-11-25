@@ -105,7 +105,7 @@ class ProjectFiles {
       backgroundImage = loaded.background;
       penImage = loaded.brush;
       currentFile = selection;
-      surface.setSize(max(START_WIDTH, loaded.canvasWidth), max(MIN_HEIGHT, loaded.canvasHeight + CANVAS_TOP));
+      resizeForCanvas(loaded.canvasWidth, loaded.canvasHeight);
       ui.showFileMessage("Project opened");
     } catch (IOException | RuntimeException error) {
       fileManager.showError("Could not open the project.\n" + error.getMessage());
@@ -185,7 +185,8 @@ class ProjectFiles {
     restored.setPenColor(data.readInt());
     restored.penOpacity = readRange(data, 0, 255);
     restored.currentTool = ToolType.valueOf(data.readUTF());
-    restored.subToolMode = readRange(data, 1, 4);
+    int lastMode = restored.currentTool == ToolType.PEN ? PAPER_PENCIL_MODE : 4;
+    restored.subToolMode = readRange(data, 1, lastMode);
     restored.blendModeIndex = readRange(data, 0, 9);
     restored.chemistrySwitchR = readRange(data, 1, 4);
     restored.switchS = data.readBoolean();

@@ -47,6 +47,7 @@ class BrushBlendContext implements CompositeContext {
   int blendInk(int existing, int ink) {
     int inkAlpha = ink >>> 24;
     if (inkAlpha == 0) return existing;
+    if (mode == REPLACE) return ink;
     int existingAlpha = existing >>> 24;
     if (existingAlpha == 255) return PImage.blendColor(existing, ink, mode);
 

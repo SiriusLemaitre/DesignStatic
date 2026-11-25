@@ -2,6 +2,8 @@ import java.io.File;
 import java.awt.AlphaComposite;
 import java.awt.Composite;
 import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.image.BufferedImage;
 import processing.awt.PGraphicsJava2D;
 import java.awt.Color;
@@ -22,11 +24,13 @@ import processing.awt.PSurfaceAWT;
 // GLOBAL CONSTANTS & ENUMS
 // =========================================================
 final int UI_HEIGHT = 50;
-final int PRO_BAR_HEIGHT = 64;
-final int CANVAS_TOP = UI_HEIGHT + PRO_BAR_HEIGHT;
+final int TOOL_BAR_HEIGHT = 32;
+final int ANIMATION_TOP = UI_HEIGHT + TOOL_BAR_HEIGHT;
+final int PRO_BAR_HEIGHT = TOOL_BAR_HEIGHT + 64;
+final int EXPANDED_CANVAS_TOP = UI_HEIGHT + PRO_BAR_HEIGHT;
 final int START_WIDTH = 600;
-final int START_HEIGHT = 600 + CANVAS_TOP;
-final int MIN_HEIGHT = 320;
+final int START_CANVAS_HEIGHT = 600;
+final int MIN_CANVAS_HEIGHT = 174;
 
 enum ToolType { PEN, FILL, DESIGN, RECT, CHEMISTRY, ERASER, IMAGE_PEN }
 
@@ -38,14 +42,19 @@ enum ToolType { PEN, FILL, DESIGN, RECT, CHEMISTRY, ERASER, IMAGE_PEN }
 AppState state;
 UIManager ui;
 AnimationBar animationBar;
+ToolControls toolControls;
 ProjectFiles projectFiles;
 ToolManager tools;
 FileManager fileManager;
 Artwork artwork;
 ColorPicker picker;
+Frame appFrame;
+boolean sectionsVisible = true;
 boolean strokeActive;
 boolean controlTap;
-boolean shiftTap;
+final int SHIFT_COLOR_INTERVAL_MS = 150;
+boolean cyclingPenColor;
+int nextShiftColorAt;
 final ConcurrentLinkedQueue<Runnable> sketchActions = new ConcurrentLinkedQueue<Runnable>();
 
 // Images
@@ -58,7 +67,7 @@ int mouseDirX = 0;
 color currentPixelColor, prevPixelColor;
 
 void settings() {
-  size(START_WIDTH, START_HEIGHT);
+  size(START_WIDTH, START_CANVAS_HEIGHT + EXPANDED_CANVAS_TOP);
   // Keep drawing, colour picking and export crops in the same pixel space,
   // including when the standalone app runs on a high-DPI display.
   pixelDensity(1);
@@ -68,12 +77,8 @@ void settings() {
 void setup() {
   surface.setTitle("Design Static Pro");
   surface.setResizable(true);
-  Frame frame = ((PSurfaceAWT.SmoothCanvas)surface.getNative()).getFrame();
-  EventQueue.invokeLater(() -> {
-    Insets border = frame.getInsets();
-    frame.setMinimumSize(new Dimension(START_WIDTH + border.left + border.right,
-                                      MIN_HEIGHT + border.top + border.bottom));
-  });
+  appFrame = ((PSurfaceAWT.SmoothCanvas)surface.getNative()).getFrame();
+  EventQueue.invokeLater(() -> updateWindowMinimum(EXPANDED_CANVAS_TOP));
   frameRate(120);
   rectMode(CORNER);
 
@@ -84,25 +89,68 @@ void setup() {
   fileManager = new FileManager();
   picker = new ColorPicker();
 
-  // Random start background
-  state.randomizeBgColor();
   artwork = new Artwork();
   animationBar = new AnimationBar();
+  toolControls = new ToolControls();
   projectFiles = new ProjectFiles();
+}
+
+int canvasTop() {
+  return sectionsVisible ? EXPANDED_CANVAS_TOP : UI_HEIGHT;
+}
+
+void updateWindowMinimum(int top) {
+  Insets border = appFrame.getInsets();
+  appFrame.setMinimumSize(new Dimension(START_WIDTH + border.left + border.right,
+    MIN_CANVAS_HEIGHT + top + border.top + border.bottom));
+}
+
+void resizeForCanvas(int canvasWidth, int canvasHeight) {
+  surface.setSize(max(START_WIDTH, canvasWidth), max(MIN_CANVAS_HEIGHT, canvasHeight) + canvasTop());
+}
+
+void toggleSections() {
+  finishStroke();
+  toolControls.stopDrag();
+  state.isWritingHex = false;
+  int canvasHeight = artwork.visibleHeight();
+  sectionsVisible = !sectionsVisible;
+  if (!sectionsVisible) updateWindowMinimum(canvasTop());
+  resizeForCanvas(width, canvasHeight);
+  if (sectionsVisible) updateWindowMinimum(canvasTop());
 }
 
 void draw() {
   Runnable action;
   while ((action = sketchActions.poll()) != null) action.run();
+  updateShiftColor();
 
   blendMode(BLEND);
   background(state.bgColor);
   artwork.drawCanvas();
-  ui.drawUI();
-  animationBar.display();
+  drawInterfaceBars();
   if (picker.open) picker.display();
   updateCursor();
   ui.updateTimers();
+}
+
+void drawInterfaceBars() {
+  Graphics2D renderer = ((PGraphicsJava2D)g).g2;
+  RenderingHints previousHints = renderer.getRenderingHints();
+  Shape previousClip = renderer.getClip();
+  renderer.clipRect(0, 0, width, canvasTop());
+  renderer.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+  renderer.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+  try {
+    ui.drawUI();
+    if (sectionsVisible) {
+      toolControls.display();
+      animationBar.display();
+    }
+  } finally {
+    renderer.setRenderingHints(previousHints);
+    renderer.setClip(previousClip);
+  }
 }
 
 // =========================================================
@@ -111,7 +159,6 @@ void draw() {
 
 void mousePressed() {
   controlTap = false;
-  shiftTap = false;
   if (picker.open) {
     if (mouseButton == LEFT) picker.press();
     return;
@@ -122,8 +169,11 @@ void mousePressed() {
     return;
   }
 
-  if (mouseY < CANVAS_TOP) {
-    if (mouseButton == LEFT) animationBar.press();
+  if (mouseY < canvasTop()) {
+    if (mouseButton == LEFT) {
+      if (mouseY < ANIMATION_TOP) toolControls.press();
+      else animationBar.press();
+    }
     return;
   }
 
@@ -149,6 +199,7 @@ void mouseDragged() {
     picker.drag();
     return;
   }
+  if (toolControls.drag()) return;
   if (!strokeActive) return;
 
   // Update oil thickness logic from original code
@@ -170,6 +221,7 @@ void mouseDragged() {
 
 void mouseReleased() {
   picker.stopDrag();
+  toolControls.stopDrag();
   if (mouseButton == LEFT) finishStroke();
 }
 
@@ -183,8 +235,9 @@ void finishStroke() {
 void focusLost() {
   sketchActions.add(() -> {
     controlTap = false;
-    shiftTap = false;
+    cyclingPenColor = false;
     picker.stopDrag();
+    toolControls.stopDrag();
     finishStroke();
   });
 }
@@ -202,7 +255,7 @@ void mouseWheel(MouseEvent event) {
 
 void keyPressed(KeyEvent event) {
   if (keyCode != CONTROL) controlTap = false;
-  if (keyCode != SHIFT) shiftTap = false;
+  if (event.isControlDown() || event.isMetaDown() || event.isAltDown()) cyclingPenColor = false;
   if (picker.open) {
     picker.pressKey(event);
     return;
@@ -213,7 +266,11 @@ void keyPressed(KeyEvent event) {
     return;
   }
   if (keyCode == SHIFT) {
-    if (!event.isAutoRepeat()) shiftTap = !event.isControlDown() && !event.isMetaDown() && !event.isAltDown();
+    if (!event.isAutoRepeat() && !cyclingPenColor && !state.isWritingHex &&
+        !event.isControlDown() && !event.isMetaDown() && !event.isAltDown()) {
+      cyclingPenColor = true;
+      changeShiftColor(millis());
+    }
     return;
   }
   if (event.isControlDown() || event.isMetaDown()) {
@@ -251,18 +308,17 @@ void keyPressed(KeyEvent event) {
   }
 
   // Tool Selection Hotkeys
-  if (key == 'q') state.currentTool = ToolType.PEN;
-  if (key == 'w') state.currentTool = ToolType.FILL;
-  if (key == 'e') state.currentTool = ToolType.DESIGN;
-  if (key == 'r') state.currentTool = ToolType.RECT;
-  if (key == 't') state.currentTool = ToolType.CHEMISTRY;
-  if (key == 'd') state.currentTool = ToolType.ERASER;
-  if (key == 'f') state.currentTool = ToolType.IMAGE_PEN;
+  if (key == 'q') state.selectTool(ToolType.PEN);
+  if (key == 'w') state.selectTool(ToolType.FILL);
+  if (key == 'e') state.selectTool(ToolType.DESIGN);
+  if (key == 'r') state.selectTool(ToolType.RECT);
+  if (key == 't') state.selectTool(ToolType.CHEMISTRY);
+  if (key == 'd') state.selectTool(ToolType.ERASER);
+  if (key == 'f') state.selectTool(ToolType.IMAGE_PEN);
 
-  // Sub-Tool Switching (1, 2, 3, 4)
-  if (key >= '1' && key <= '4') {
-    state.subToolMode = int(String.valueOf(key));
-  }
+  // Sub-tool shortcuts
+  if (key >= '1' && key <= '4') state.subToolMode = key - '0';
+  if (key == '5' && state.currentTool == ToolType.PEN) state.subToolMode = PAPER_PENCIL_MODE;
 
   // Parameter Adjustments (+, -, s, a, c, x)
   handleParameterAdjustments();
@@ -284,19 +340,10 @@ void keyPressed(KeyEvent event) {
 
   // Blend Modes
   if (key == 'y') {
-    state.blendModeIndex++;
-    if (state.blendModeIndex > 9) state.blendModeIndex = 0;
+    state.cycleBlend(1);
   }
 
-  // Specific toggles
-  if (key == TAB) {
-    if (state.currentTool == ToolType.CHEMISTRY) {
-      if (state.subToolMode == 1) state.chemistrySwitchR++;
-      if (state.chemistrySwitchR > 4) state.chemistrySwitchR = 1;
-
-      if (state.subToolMode == 4) state.switchS = !state.switchS;
-    }
-  }
+  if (key == TAB) state.cycleChemistryVariant();
 }
 
 void keyReleased(KeyEvent event) {
@@ -304,10 +351,23 @@ void keyReleased(KeyEvent event) {
     controlTap = false;
     if (!picker.open && !state.isWritingHex) fileManager.quickSave();
   }
-  if (keyCode == SHIFT && shiftTap) {
-    shiftTap = false;
-    if (!picker.open && !state.isWritingHex) state.randomizePenColor();
+  if (keyCode == SHIFT) cyclingPenColor = false;
+}
+
+void updateShiftColor() {
+  if (!cyclingPenColor) return;
+  if (picker.open || state.isWritingHex) {
+    cyclingPenColor = false;
+    return;
   }
+  int now = millis();
+  if (now - nextShiftColorAt >= 0) changeShiftColor(now);
+}
+
+void changeShiftColor(int now) {
+  state.randomizePenColor();
+  artwork.dirty = true;
+  nextShiftColorAt = now + SHIFT_COLOR_INTERVAL_MS;
 }
 
 void keyTyped() {
@@ -351,7 +411,7 @@ void sampleBrushPixels() {
 }
 
 void updateCursor() {
-  if (!picker.open && mouseX >= 0 && mouseX < width && mouseY >= CANVAS_TOP && mouseY < height && !artwork.playing && artwork.canEdit()) {
+  if (!picker.open && mouseX >= 0 && mouseX < width && mouseY >= canvasTop() && mouseY < height && !artwork.playing && artwork.canEdit()) {
     cursor(CROSS);
   } else {
     cursor(ARROW);
@@ -367,7 +427,7 @@ void handleReset() {
   artwork.clear(useBackgroundImage);
   artwork.commitEdit();
   if (!useBackgroundImage && !state.isLocked) {
-    surface.setSize(START_WIDTH, START_HEIGHT);
+    resizeForCanvas(START_WIDTH, START_CANVAS_HEIGHT);
   }
   // Reset Params
   state.rectSize = 33.0;
@@ -392,17 +452,15 @@ void handleParameterAdjustments() {
       if (key == 'x' && state.bezierWeight >= 1) state.bezierWeight--;
     }
   }
-  if (state.currentTool == ToolType.PEN) {
-    if (up && state.penSize <= 30) state.penSize += 2;
-    if (down && state.penSize >= 2) state.penSize -= 2;
+  if (state.currentTool == ToolType.PEN || state.currentTool == ToolType.FILL) {
+    if (up) toolControls.adjustSize(2);
+    if (down) toolControls.adjustSize(-2);
   }
   if (state.currentTool == ToolType.ERASER) {
     if (up && state.eraserSize <= 98) state.eraserSize += 2;
     if (down && state.eraserSize >= 4) state.eraserSize -= 2;
   }
   if (state.currentTool == ToolType.FILL) {
-    if (up && state.splashWidth <= 100) state.splashWidth += 2;
-    if (down && state.splashWidth >= 2) state.splashWidth--;
     if (key == 'c' && state.splashConcentration <= 100) state.splashConcentration += 2;
     if (key == 'x' && state.splashConcentration >= 2) state.splashConcentration -= 2;
   }
@@ -419,13 +477,13 @@ int sgn(float f) {
 // =========================================================
 class AppState {
   // Colors
-  color bgColor;
-  color penColor;
+  color bgColor = #D28E8E;
+  color penColor = #FFFFFF;
   int penOpacity = 255;
 
   // Tools
   ToolType currentTool = ToolType.PEN;
-  int subToolMode = 1; // 1, 2, 3, 4
+  int subToolMode = 1;
 
   // Tool Settings
   float penSize = 6;
@@ -454,8 +512,25 @@ class AppState {
   boolean isBgImageActive = false;
   int blendModeIndex = 0;
 
-  AppState() {
-    randomizePenColor();
+  void selectTool(ToolType tool) {
+    currentTool = tool;
+    if (tool != ToolType.PEN && subToolMode == PAPER_PENCIL_MODE) subToolMode = 1;
+  }
+
+  void cycleBlend(int direction) {
+    blendModeIndex = Math.floorMod(blendModeIndex + direction, BRUSH_BLEND_MODES.length);
+    artwork.dirty = true;
+  }
+
+  void cycleChemistryVariant() {
+    if (currentTool != ToolType.CHEMISTRY) return;
+    if (subToolMode == 1) {
+      chemistrySwitchR = chemistrySwitchR % 4 + 1;
+      artwork.dirty = true;
+    } else if (subToolMode == 4) {
+      switchS = !switchS;
+      artwork.dirty = true;
+    }
   }
 
   void randomizeBgColor() {
@@ -481,248 +556,6 @@ class AppState {
   }
 }
 
-class ColorPicker {
-  final int X = 8, Y = 55, WIDTH = 332, HEIGHT = 261;
-  final int FIELD_X = 20, FIELD_Y = 87, FIELD_WIDTH = 242, FIELD_HEIGHT = 144;
-  final int HUE_X = 272, HUE_WIDTH = 20;
-  final int HEX_X = 20, HEX_Y = 241, HEX_WIDTH = 83, HEX_HEIGHT = 23;
-  final int ALPHA_X = 64, ALPHA_Y = 271, ALPHA_WIDTH = 226, ALPHA_HEIGHT = 12;
-  final int CANCEL_X = 174, DONE_X = 253, BUTTON_Y = 288, BUTTON_WIDTH = 74, BUTTON_HEIGHT = 21;
-  final int NO_DRAG = 0, FIELD_DRAG = 1, HUE_DRAG = 2, ALPHA_DRAG = 3;
-  boolean open;
-  boolean hexFocused;
-  boolean replaceHex;
-  int dragTarget;
-  float hue, saturation, brightness;
-  float renderedHue = -1;
-  color originalColor;
-  int originalOpacity;
-  String hexValue;
-  PImage field;
-  PImage hueBar;
-
-  void show() {
-    open = true;
-    hexFocused = false;
-    stopDrag();
-    originalColor = state.penColor;
-    originalOpacity = state.penOpacity;
-    setFromColor(originalColor);
-    hexValue = hex(originalColor, 6);
-    if (field != null) return;
-
-    field = createImage(FIELD_WIDTH, FIELD_HEIGHT, RGB);
-    hueBar = createImage(HUE_WIDTH, FIELD_HEIGHT, RGB);
-    hueBar.loadPixels();
-    for (int y = 0; y < FIELD_HEIGHT; y++) {
-      int rgb = Color.HSBtoRGB(y / (FIELD_HEIGHT - 1.0f), 1, 1);
-      Arrays.fill(hueBar.pixels, y * HUE_WIDTH, (y + 1) * HUE_WIDTH, rgb);
-    }
-    hueBar.updatePixels();
-  }
-
-  void setFromColor(color value) {
-    float[] hsb = Color.RGBtoHSB((value >> 16) & 255, (value >> 8) & 255, value & 255, null);
-    hue = hsb[0];
-    saturation = hsb[1];
-    brightness = hsb[2];
-  }
-
-  color selectedColor() {
-    return Color.HSBtoRGB(hue, saturation, brightness);
-  }
-
-  void updateField() {
-    if (hue == renderedHue) return;
-    field.loadPixels();
-    for (int y = 0; y < FIELD_HEIGHT; y++) {
-      float value = 1 - y / (FIELD_HEIGHT - 1.0f);
-      for (int x = 0; x < FIELD_WIDTH; x++) {
-        field.pixels[y * FIELD_WIDTH + x] = Color.HSBtoRGB(hue, x / (FIELD_WIDTH - 1.0f), value);
-      }
-    }
-    field.updatePixels();
-    renderedHue = hue;
-  }
-
-  void display() {
-    updateField();
-    pushStyle();
-    strokeWeight(1);
-    stroke(0);
-    fill(246);
-    rect(X, Y, WIDTH, HEIGHT);
-    fill(0);
-    textSize(15);
-    text("Pen Color", FIELD_X, 76);
-    image(field, FIELD_X, FIELD_Y);
-    image(hueBar, HUE_X, FIELD_Y);
-
-    float pointX = FIELD_X + saturation * (FIELD_WIDTH - 1);
-    float pointY = FIELD_Y + (1 - brightness) * (FIELD_HEIGHT - 1);
-    noFill();
-    stroke(0);
-    circle(pointX, pointY, 11);
-    stroke(255);
-    circle(pointX, pointY, 9);
-    float hueY = FIELD_Y + hue * (FIELD_HEIGHT - 1);
-    stroke(0);
-    rect(HUE_X - 2, hueY - 2, HUE_WIDTH + 3, 4);
-    stroke(255);
-    line(HUE_X, hueY, HUE_X + HUE_WIDTH - 1, hueY);
-
-    color preview = state.penColor;
-    drawSwatch(302, FIELD_Y, originalColor, originalOpacity);
-    drawSwatch(302, FIELD_Y + FIELD_HEIGHT / 2, preview, state.penOpacity);
-
-    stroke(hexFocused ? color(0) : color(150));
-    fill(hexFocused && replaceHex ? color(218, 230, 243) : color(255));
-    rect(HEX_X, HEX_Y, HEX_WIDTH, HEX_HEIGHT);
-    fill(0);
-    textSize(12);
-    text("#" + hexValue.toUpperCase(), HEX_X + 6, HEX_Y + 16);
-    if (hexValue.length() == 6) {
-      text("RGB  " + int(red(preview)) + ", " + int(green(preview)) + ", " + int(blue(preview)), 115, HEX_Y + 16);
-    } else {
-      text("Enter 6 hex digits", 115, HEX_Y + 16);
-    }
-    drawAlphaSlider();
-    drawButton(CANCEL_X, "Cancel");
-    drawButton(DONE_X, "Done");
-    popStyle();
-  }
-
-  void drawSwatch(int x, int y, color value, int opacity) {
-    int swatchWidth = 25;
-    int swatchHeight = FIELD_HEIGHT / 2;
-    drawCheckerboard(x, y, swatchWidth, swatchHeight);
-    fill(value, opacity);
-    rect(x, y, swatchWidth, swatchHeight);
-    noFill();
-    stroke(0);
-    rect(x, y, swatchWidth, swatchHeight);
-  }
-
-  void drawAlphaSlider() {
-    drawCheckerboard(ALPHA_X, ALPHA_Y, ALPHA_WIDTH, ALPHA_HEIGHT);
-    for (int x = 0; x < ALPHA_WIDTH; x++) {
-      stroke(state.penColor, x * 255.0f / (ALPHA_WIDTH - 1));
-      line(ALPHA_X + x, ALPHA_Y, ALPHA_X + x, ALPHA_Y + ALPHA_HEIGHT - 1);
-    }
-    noFill();
-    stroke(0);
-    rect(ALPHA_X - 1, ALPHA_Y - 1, ALPHA_WIDTH + 1, ALPHA_HEIGHT + 1);
-    float markerX = ALPHA_X + state.penOpacity * (ALPHA_WIDTH - 1) / 255.0f;
-    rect(markerX - 2, ALPHA_Y - 2, 4, ALPHA_HEIGHT + 3);
-    stroke(255);
-    line(markerX, ALPHA_Y - 1, markerX, ALPHA_Y + ALPHA_HEIGHT);
-    fill(0);
-    text("Alpha", FIELD_X, ALPHA_Y + 10);
-    text(str(state.penOpacity), 301, ALPHA_Y + 10);
-  }
-
-  void drawCheckerboard(int x, int y, int w, int h) {
-    int tile = 6;
-    noStroke();
-    for (int row = 0; row < h; row += tile) {
-      for (int col = 0; col < w; col += tile) {
-        fill((row / tile + col / tile) % 2 == 0 ? 255 : 190);
-        rect(x + col, y + row, min(tile, w - col), min(tile, h - row));
-      }
-    }
-  }
-
-  void drawButton(int x, String title) {
-    fill(over(x, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT) ? 220 : 255);
-    stroke(0);
-    rect(x, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT);
-    fill(0);
-    textAlign(CENTER);
-    text(title, x + BUTTON_WIDTH / 2, BUTTON_Y + 15);
-    textAlign(LEFT);
-  }
-
-  boolean over(int x, int y, int w, int h) {
-    return mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
-  }
-
-  void press() {
-    if (!over(X, Y, WIDTH, HEIGHT) || over(DONE_X, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT)) {
-      open = false;
-    } else if (over(CANCEL_X, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT)) {
-      cancel();
-    } else if (over(HEX_X, HEX_Y, HEX_WIDTH, HEX_HEIGHT)) {
-      hexFocused = true;
-      replaceHex = true;
-    } else if (over(FIELD_X, FIELD_Y, FIELD_WIDTH, FIELD_HEIGHT)) {
-      dragTarget = FIELD_DRAG;
-      drag();
-    } else if (over(HUE_X, FIELD_Y, HUE_WIDTH, FIELD_HEIGHT)) {
-      dragTarget = HUE_DRAG;
-      drag();
-    } else if (over(ALPHA_X - 2, ALPHA_Y - 2, ALPHA_WIDTH + 4, ALPHA_HEIGHT + 4)) {
-      dragTarget = ALPHA_DRAG;
-      drag();
-    }
-  }
-
-  void drag() {
-    if (dragTarget == NO_DRAG) return;
-    if (dragTarget == ALPHA_DRAG) {
-      state.penOpacity = constrain(round((mouseX - ALPHA_X) * 255.0f / (ALPHA_WIDTH - 1)), 0, 255);
-    } else {
-      float vertical = constrain((mouseY - FIELD_Y) / (FIELD_HEIGHT - 1.0f), 0, 1);
-      if (dragTarget == FIELD_DRAG) {
-        saturation = constrain((mouseX - FIELD_X) / (FIELD_WIDTH - 1.0f), 0, 1);
-        brightness = 1 - vertical;
-      } else {
-        hue = vertical;
-      }
-      state.setPenColor(selectedColor());
-    }
-    hexFocused = false;
-    hexValue = hex(state.penColor, 6);
-  }
-
-  void stopDrag() {
-    dragTarget = NO_DRAG;
-  }
-
-  void pressKey(KeyEvent event) {
-    if (key == ESC) {
-      key = 0;
-      cancel();
-    } else if (key == ENTER || key == RETURN) {
-      open = false;
-    } else if (hexFocused && (event.isControlDown() || event.isMetaDown()) &&
-               keyCode == java.awt.event.KeyEvent.VK_A) {
-      replaceHex = true;
-    } else if (hexFocused && (key == BACKSPACE || key == DELETE)) {
-      hexValue = replaceHex || hexValue.isEmpty() ? "" : hexValue.substring(0, hexValue.length() - 1);
-      replaceHex = false;
-    }
-  }
-
-  void typeKey(char typed) {
-    if (!hexFocused || !isHexDigit(typed)) return;
-    if (replaceHex) {
-      hexValue = "";
-      replaceHex = false;
-    }
-    if (hexValue.length() < 6) hexValue += typed;
-    if (hexValue.length() == 6) {
-      state.setPenColor(unhex(hexValue));
-      setFromColor(state.penColor);
-    }
-  }
-
-  void cancel() {
-    state.setPenColor(originalColor);
-    state.penOpacity = originalOpacity;
-    open = false;
-  }
-}
-
 // =========================================================
 // CLASS: UI MANAGER
 // =========================================================
@@ -735,8 +568,12 @@ class UIManager {
     saveMsgTimer = 300;
   }
 
-  // Highlight colors for buttons
-  color cLoad, cSave, cQuick, cTrans;
+  final int ERASER_X = 487;
+  final int FILE_X = 531, FILE_Y = 5, FILE_BUTTON_SIZE = 16, FILE_BUTTON_STEP = 19;
+  final int SECTIONS_ARROW_WIDTH = 14, SECTIONS_ARROW_HEIGHT = 19;
+  final int SECTIONS_ARROW_Y = FILE_Y + FILE_BUTTON_STEP + FILE_BUTTON_SIZE - SECTIONS_ARROW_HEIGHT;
+  final String[] fileLabels = {"L", "S", "qS", "BG"};
+  final String[] fileTooltips = {"Load image", "Save custom", "Quick Save", "Transparent BG"};
 
   void drawUI() {
     blendMode(BLEND);
@@ -776,6 +613,7 @@ class UIManager {
 
     drawFileButtons();
     drawToolIcons();
+    drawSectionsArrow();
   }
 
   void updateTimers() {
@@ -788,30 +626,77 @@ class UIManager {
     }
   }
 
+  boolean overButton(int x, int y, int w, int h) {
+    return mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
+  }
+
+  int fileButtonX(int index) {
+    return FILE_X + index % 2 * FILE_BUTTON_STEP;
+  }
+
+  int fileButtonY(int index) {
+    return FILE_Y + index / 2 * FILE_BUTTON_STEP;
+  }
+
+  int hoveredFileButton() {
+    for (int index = 0; index < fileLabels.length; index++) {
+      if (overButton(fileButtonX(index), fileButtonY(index), FILE_BUTTON_SIZE, FILE_BUTTON_SIZE)) return index;
+    }
+    return -1;
+  }
+
   void drawFileButtons() {
-    // Hover detection logic
-    boolean overLoad = mouseX > 498 && mouseX < 514 && mouseY > 5 && mouseY < 22;
-    boolean overSave = mouseX > 517 && mouseX < 533 && mouseY > 5 && mouseY < 22;
-    boolean overQuick = mouseX > 498 && mouseX < 514 && mouseY > 24 && mouseY < 40;
-    boolean overTrans = mouseX > 517 && mouseX < 533 && mouseY > 24 && mouseY < 40;
+    int hovered = hoveredFileButton();
+    for (int index = 0; index < fileLabels.length; index++) {
+      int x = fileButtonX(index);
+      int y = fileButtonY(index);
+      fill(index == hovered ? 100 : 0);
+      rect(x, y, FILE_BUTTON_SIZE, FILE_BUTTON_SIZE);
+      fill(255);
+      textSize(index < 2 ? 11 : 10);
+      String label = fileLabels[index];
+      text(label, x + (FILE_BUTTON_SIZE - textWidth(label)) / 2, y + 12);
+    }
+    if (hovered >= 0) {
+      textSize(8);
+      fill(0);
+      text(fileTooltips[hovered], FILE_X + FILE_BUTTON_STEP + FILE_BUTTON_SIZE - textWidth(fileTooltips[hovered]), 47);
+    }
+  }
 
-    cLoad = overLoad ? color(100) : color(0);
-    cSave = overSave ? color(100) : color(0);
-    cQuick = overQuick ? color(100) : color(0);
-    cTrans = overTrans ? color(100) : color(0);
+  int sectionsArrowX() {
+    return width - SECTIONS_ARROW_WIDTH - 4;
+  }
 
-    // Tooltip logic
-    textSize(8); fill(0);
-    if (overLoad) text("Load image", 491, 47);
-    if (overSave) text("Save custom", 491, 47);
-    if (overQuick) text("Quick Save", 491, 47);
-    if (overTrans) text("Transparent BG", 491, 47);
+  boolean overSectionsArrow() {
+    return overButton(sectionsArrowX(), SECTIONS_ARROW_Y, SECTIONS_ARROW_WIDTH, SECTIONS_ARROW_HEIGHT);
+  }
 
-    // Draw Icons
-    fill(cLoad); rect(498, 5, 16, 16); fill(255); textSize(11); text("L", 504, 16);
-    fill(cSave); rect(517, 5, 16, 16); fill(255); textSize(11); text("S", 522, 16);
-    fill(cQuick); rect(498, 24, 16, 16); fill(255); textSize(10); text("qS", 501, 36);
-    fill(cTrans); rect(517, 24, 16, 16); fill(255); textSize(10); text("BG", 519, 36);
+  void drawSectionsArrow() {
+    boolean hovered = overSectionsArrow();
+    int x = sectionsArrowX();
+    int centerX = x + SECTIONS_ARROW_WIDTH / 2;
+    int centerY = SECTIONS_ARROW_Y + SECTIONS_ARROW_HEIGHT / 2;
+    int direction = sectionsVisible ? -1 : 1;
+    pushStyle();
+    stroke(0);
+    fill(hovered ? 100 : 0);
+    rect(x, SECTIONS_ARROW_Y, SECTIONS_ARROW_WIDTH, SECTIONS_ARROW_HEIGHT, 2);
+    stroke(255);
+    strokeWeight(1.5f);
+    line(centerX - 3, centerY - direction * 2, centerX, centerY + direction);
+    line(centerX, centerY + direction, centerX + 3, centerY - direction * 2);
+    if (hovered) {
+      String label = sectionsVisible ? "Hide panels" : "Show panels";
+      textSize(8);
+      fill(0);
+      text(label, width - 5 - textWidth(label), 47);
+    }
+    popStyle();
+  }
+
+  boolean overEraser() {
+    return overButton(ERASER_X, 3, 32, 36);
   }
 
   void drawToolIcons() {
@@ -838,7 +723,7 @@ class UIManager {
       if (mouseX > 300 && mouseX < 355) hl[2] = 150;
       if (mouseX > 365 && mouseX < 415) hl[3] = 150;
       if (mouseX > 425 && mouseX < 475) hl[4] = 150;
-      if (mouseX > 563 && mouseX < 588) hl[5] = 150;
+      if (overEraser()) hl[5] = 150;
     }
 
     strokeWeight(1); stroke(0);
@@ -854,11 +739,15 @@ class UIManager {
     // Chemistry
     fill(hl[4]); rect(443, 5, 15, 25, 18); rect(425, 20, 50, 20, 28); fill(255); textSize(10); text("chemistry", 427, 33);
     // Eraser
-    fill(255); arc(577, 20, 31, 32, PI, TWO_PI); fill(hl[5]); rect(561, 15, 32, 23); fill(255); textSize(10); text("eraser", 563, 33);
+    fill(255); arc(ERASER_X + 16, 20, 31, 32, PI, TWO_PI); fill(hl[5]); rect(ERASER_X, 15, 32, 23); fill(255); textSize(10); text("eraser", ERASER_X + 2, 33);
   }
 
   void handleMousePress() {
     if (mouseButton != LEFT) return;
+    if (overSectionsArrow()) {
+      toggleSections();
+      return;
+    }
     if (dist(mouseX, mouseY, 124, 23) <= 15) {
       state.isWritingHex = false;
       picker.show();
@@ -869,19 +758,21 @@ class UIManager {
       state.hexInput = "";
     }
 
-    if (mouseX > 498 && mouseX < 514 && mouseY > 5 && mouseY < 22) fileManager.selectImageForLoad(false);
-    if (mouseX > 517 && mouseX < 533 && mouseY > 5 && mouseY < 22) fileManager.saveCustomLocation();
-    if (mouseX > 498 && mouseX < 514 && mouseY > 24 && mouseY < 40) fileManager.quickSave();
-    if (mouseX > 517 && mouseX < 533 && mouseY > 24 && mouseY < 40) fileManager.saveTransparent();
+    switch (hoveredFileButton()) {
+      case 0: fileManager.selectImageForLoad(false); return;
+      case 1: fileManager.saveCustomLocation(); return;
+      case 2: fileManager.quickSave(); return;
+      case 3: fileManager.saveTransparent(); return;
+    }
 
     // Tool Selection by Mouse
     if (mouseY < 46) {
-      if (mouseX > 215 && mouseX < 245) state.currentTool = ToolType.PEN;
-      if (mouseX > 255 && mouseX < 290) state.currentTool = ToolType.FILL;
-      if (mouseX > 300 && mouseX < 355) state.currentTool = ToolType.DESIGN;
-      if (mouseX > 365 && mouseX < 415) state.currentTool = ToolType.RECT;
-      if (mouseX > 425 && mouseX < 475) state.currentTool = ToolType.CHEMISTRY;
-      if (mouseX > 563 && mouseX < 588) state.currentTool = ToolType.ERASER;
+      if (mouseX > 215 && mouseX < 245) state.selectTool(ToolType.PEN);
+      if (mouseX > 255 && mouseX < 290) state.selectTool(ToolType.FILL);
+      if (mouseX > 300 && mouseX < 355) state.selectTool(ToolType.DESIGN);
+      if (mouseX > 365 && mouseX < 415) state.selectTool(ToolType.RECT);
+      if (mouseX > 425 && mouseX < 475) state.selectTool(ToolType.CHEMISTRY);
+      if (overEraser()) state.selectTool(ToolType.ERASER);
     }
   }
 }
@@ -896,7 +787,9 @@ class ToolManager {
     if (state.penOpacity == 0 && state.currentTool != ToolType.ERASER) return;
     layer = artwork.activeLayer().pixels;
     // Initial dots or setup for tools
-    if (state.currentTool == ToolType.PEN) {
+    if (state.currentTool == ToolType.PEN && state.subToolMode == PAPER_PENCIL_MODE) {
+      drawPaperPencil(mouseX, mouseY, mouseX, mouseY, layer);
+    } else if (state.currentTool == ToolType.PEN) {
       layer.stroke(state.penColor, state.penOpacity);
       layer.strokeWeight(state.penSize);
       layer.point(mouseX, mouseY);
@@ -953,6 +846,10 @@ class ToolManager {
   }
 
   void drawPenDrag() {
+    if (state.subToolMode == PAPER_PENCIL_MODE) {
+      drawPaperPencil(pmouseX, pmouseY, mouseX, mouseY, layer);
+      return;
+    }
     layer.stroke(state.penColor, state.penOpacity);
     if (state.subToolMode == 2) { // Standard Line
       layer.strokeWeight(state.penSize);
@@ -979,11 +876,11 @@ class ToolManager {
       layer.line(state.shapeStart.x+random(-16,16), state.shapeStart.y+random(-16,16), mouseX+random(-16,16), mouseY+random(-16,16));
       layer.line(state.shapeStart.x+random(-16,16), state.shapeStart.y+random(-16,16), mouseX+random(-16,16), mouseY+random(-16,16));
     } else if (state.subToolMode == 3) {
-       layer.strokeWeight(0.2);
+       layer.strokeWeight(state.penSize / 30.0f);
        if (mouseX > 360) layer.line(state.shapeStart.x+random(0, mouseX-state.shapeStart.x), state.shapeStart.y+random(0, 32), mouseX+random(-16, 16), mouseY+random(-16, 16));
        else {
          // This brush mixes X with the original window-relative Y.
-         float originalStartY = state.shapeStart.y - PRO_BAR_HEIGHT;
+         float originalStartY = state.shapeStart.y - (canvasTop() - UI_HEIGHT);
          layer.line(state.shapeStart.x + random(mouseX - originalStartY, 0), state.shapeStart.y + random(0, 32),
            mouseX + random(-16, 16), mouseY + random(-16, 16));
        }
@@ -1063,7 +960,8 @@ class ToolManager {
       drawScratchLines(); // Reusing the scratch line logic from Eraser
     } else if (state.subToolMode == 3) {
       layer.strokeWeight(state.bezierWeight);
-      float endY = (pmouseY - PRO_BAR_HEIGHT) / 1.5 + PRO_BAR_HEIGHT;
+      int offset = canvasTop() - UI_HEIGHT;
+      float endY = (pmouseY - offset) / 1.5 + offset;
       layer.bezier(mouseX, mouseY, pmouseX, pmouseY, mouseX, mouseY, pmouseX / 1.5, endY);
     } else if (state.subToolMode == 4) {
       int X_AXIS = 2;

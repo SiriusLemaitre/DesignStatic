@@ -61,12 +61,12 @@ class Artwork {
   }
 
   int visibleHeight() {
-    return max(1, height - CANVAS_TOP);
+    return max(1, height - canvasTop());
   }
 
   void drawCanvas() {
     Graphics2D renderer = ((PGraphicsJava2D)g).g2;
-    Graphics2D canvas = (Graphics2D) renderer.create(0, CANVAS_TOP, width, visibleHeight());
+    Graphics2D canvas = (Graphics2D) renderer.create(0, canvasTop(), width, visibleHeight());
     int frameIndex = displayedFrameIndex();
     if (onionSkin && !playing && frameIndex > 0) {
       AnimationFrame previous = frames.get(frameIndex - 1);
@@ -104,10 +104,10 @@ class Artwork {
   }
 
   color sample(int x, int y) {
-    if (x < 0 || x >= width || y < CANVAS_TOP || y >= height) return state.bgColor;
+    if (x < 0 || x >= width || y < canvasTop() || y >= height) return state.bgColor;
     samplePixel.setRGB(0, 0, state.bgColor);
     Graphics2D renderer = samplePixel.createGraphics();
-    drawLayers(renderer, currentFrame(), -x, CANVAS_TOP - y);
+    drawLayers(renderer, currentFrame(), -x, canvasTop() - y);
     renderer.dispose();
     return samplePixel.getRGB(0, 0);
   }
@@ -287,7 +287,7 @@ class Artwork {
     PGraphics pixels = ensureSize(activeLayer());
     pixels.beginDraw();
     pixels.clip(0, 0, width, visibleHeight());
-    pixels.translate(0, -CANVAS_TOP);
+    pixels.translate(0, -canvasTop());
     applyBrushBlend((PGraphicsJava2D)pixels);
   }
 
