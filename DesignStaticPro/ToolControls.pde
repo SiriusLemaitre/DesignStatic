@@ -3,7 +3,11 @@ final int BAR_BUTTON_HEIGHT = 22;
 boolean barButton(boolean clicking, int x, int y, int w, String label, boolean enabled, boolean selected) {
   boolean hovered = !picker.open && mouseX >= x && mouseX < x + w &&
     mouseY >= y && mouseY < y + BAR_BUTTON_HEIGHT;
-  if (clicking) return enabled && hovered;
+  if (clicking) {
+    boolean pressed = enabled && hovered;
+    if (pressed) sounds.play(SoundCue.CLICK);
+    return pressed;
+  }
 
   stroke(0);
   fill(!enabled ? 185 : selected ? 100 : hovered ? 145 : 0);
@@ -58,7 +62,12 @@ class ToolControls {
     } else if (overSlider(OPACITY_X) && state.currentTool != ToolType.ERASER) {
       activeSlider = ToolSlider.OPACITY;
     }
-    if (!drag()) controls(true);
+    if (activeSlider == ToolSlider.NONE) {
+      controls(true);
+    } else {
+      sounds.play(SoundCue.CLICK);
+      dragSlider(false);
+    }
   }
 
   boolean overSlider(int x) {
@@ -67,6 +76,12 @@ class ToolControls {
 
   boolean drag() {
     if (activeSlider == ToolSlider.NONE) return false;
+    dragSlider(true);
+    return true;
+  }
+
+  void dragSlider(boolean feedback) {
+    float previous = activeSlider == ToolSlider.SIZE ? brushSize() : state.penOpacity;
     if (activeSlider == ToolSlider.SIZE) {
       setBrushSize(round(lerp(1, maximumSize(), sliderFraction(SIZE_X))));
     } else {
@@ -76,7 +91,8 @@ class ToolControls {
         artwork.dirty = true;
       }
     }
-    return true;
+    float current = activeSlider == ToolSlider.SIZE ? brushSize() : state.penOpacity;
+    if (feedback && current != previous) sounds.adjustment();
   }
 
   float sliderFraction(int x) {
@@ -162,7 +178,9 @@ class ToolControls {
   }
 
   void adjustSize(int delta) {
-    setBrushSize(brushSize() + delta);
+    float previous = brushSize();
+    setBrushSize(previous + delta);
+    if (brushSize() != previous) sounds.adjustment();
   }
 
   void setBrushSize(float requestedSize) {

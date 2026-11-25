@@ -48,11 +48,13 @@ ToolManager tools;
 FileManager fileManager;
 Artwork artwork;
 ColorPicker picker;
+SoundEffects sounds;
 Frame appFrame;
 boolean sectionsVisible = true;
 boolean strokeActive;
 boolean controlTap;
 final int SHIFT_COLOR_INTERVAL_MS = 150;
+final int SHIFT_COLOR_INITIAL_DELAY_MS = 1000;
 boolean cyclingPenColor;
 int nextShiftColorAt;
 final ConcurrentLinkedQueue<Runnable> sketchActions = new ConcurrentLinkedQueue<Runnable>();
@@ -93,6 +95,13 @@ void setup() {
   animationBar = new AnimationBar();
   toolControls = new ToolControls();
   projectFiles = new ProjectFiles();
+  sounds = new SoundEffects();
+  sounds.start();
+}
+
+@Override public void dispose() {
+  if (sounds != null) sounds.stop();
+  super.dispose();
 }
 
 int canvasTop() {
@@ -157,7 +166,7 @@ void drawInterfaceBars() {
 // INPUT HANDLING
 // =========================================================
 
-void mousePressed() {
+void mousePressed(MouseEvent event) {
   controlTap = false;
   if (picker.open) {
     if (mouseButton == LEFT) picker.press();
@@ -180,12 +189,14 @@ void mousePressed() {
   if (artwork.playing) return;
   if (mouseButton == RIGHT) {
     state.setPenColor(artwork.sample(mouseX, mouseY));
+    sounds.play(SoundCue.ADJUST);
     return;
   }
 
   if (mouseButton == LEFT && artwork.canEdit()) {
     artwork.beginEdit();
     strokeActive = true;
+    sounds.beginStroke(mouseX, mouseY, event.getMillis());
     state.penStart.set(mouseX, mouseY);
     sampleBrushPixels();
     artwork.beginStroke();
@@ -194,7 +205,7 @@ void mousePressed() {
   }
 }
 
-void mouseDragged() {
+void mouseDragged(MouseEvent event) {
   if (picker.open) {
     picker.drag();
     return;
@@ -216,6 +227,11 @@ void mouseDragged() {
   sampleBrushPixels();
   artwork.beginStroke();
   tools.handleDrag();
+  if (tools.hasBrushInk() && mouseX >= 0 && mouseX < width && mouseY >= canvasTop() && mouseY < height) {
+    sounds.stroke(mouseX, mouseY, event.getMillis(), state.currentTool == ToolType.ERASER);
+  } else {
+    sounds.endStroke();
+  }
   artwork.endStroke();
 }
 
@@ -228,6 +244,7 @@ void mouseReleased() {
 void finishStroke() {
   if (!strokeActive) return;
   strokeActive = false;
+  sounds.endStroke();
   state.oilThickness = 4;
   artwork.commitEdit();
 }
@@ -250,7 +267,9 @@ void mouseWheel(MouseEvent event) {
   if (picker.open) return;
   float e = event.getCount();
   state.isWritingHex = false; // Cancel writing if wheeling
+  color previous = state.penColor;
   state.adjustPenColor(e * -2); // Inverted direction to match original
+  if (state.penColor != previous) sounds.adjustment();
 }
 
 void keyPressed(KeyEvent event) {
@@ -269,7 +288,7 @@ void keyPressed(KeyEvent event) {
     if (!event.isAutoRepeat() && !cyclingPenColor && !state.isWritingHex &&
         !event.isControlDown() && !event.isMetaDown() && !event.isAltDown()) {
       cyclingPenColor = true;
-      changeShiftColor(millis());
+      changeShiftColor(millis(), SHIFT_COLOR_INITIAL_DELAY_MS);
     }
     return;
   }
@@ -361,13 +380,13 @@ void updateShiftColor() {
     return;
   }
   int now = millis();
-  if (now - nextShiftColorAt >= 0) changeShiftColor(now);
+  if (now - nextShiftColorAt >= 0) changeShiftColor(now, SHIFT_COLOR_INTERVAL_MS);
 }
 
-void changeShiftColor(int now) {
+void changeShiftColor(int now, int delay) {
   state.randomizePenColor();
   artwork.dirty = true;
-  nextShiftColorAt = now + SHIFT_COLOR_INTERVAL_MS;
+  nextShiftColorAt = now + delay;
 }
 
 void keyTyped() {
@@ -514,6 +533,7 @@ class AppState {
 
   void selectTool(ToolType tool) {
     currentTool = tool;
+    sounds.play(SoundCue.CLICK);
     if (tool != ToolType.PEN && subToolMode == PAPER_PENCIL_MODE) subToolMode = 1;
   }
 
@@ -566,6 +586,7 @@ class UIManager {
   void showFileMessage(String message) {
     fileMessage = message;
     saveMsgTimer = 300;
+    sounds.play(SoundCue.CONFIRM);
   }
 
   final int ERASER_X = 487;
@@ -613,6 +634,7 @@ class UIManager {
 
     drawFileButtons();
     drawToolIcons();
+    drawSoundButton();
     drawSectionsArrow();
   }
 
@@ -695,6 +717,45 @@ class UIManager {
     popStyle();
   }
 
+  final int SOUND_BUTTON_WIDTH = 12;
+
+  int soundButtonX() {
+    return sectionsArrowX() - SOUND_BUTTON_WIDTH - 2;
+  }
+
+  boolean overSoundButton() {
+    return overButton(soundButtonX(), SECTIONS_ARROW_Y, SOUND_BUTTON_WIDTH, SECTIONS_ARROW_HEIGHT);
+  }
+
+  void drawSoundButton() {
+    int x = soundButtonX();
+    int centerY = SECTIONS_ARROW_Y + SECTIONS_ARROW_HEIGHT / 2;
+    boolean hovered = overSoundButton();
+    boolean audible = sounds.enabled && sounds.available;
+    pushStyle();
+    stroke(0);
+    fill(!sounds.available ? 115 : hovered ? 100 : 0);
+    rect(x, SECTIONS_ARROW_Y, SOUND_BUTTON_WIDTH, SECTIONS_ARROW_HEIGHT, 2);
+    noStroke();
+    fill(255);
+    rect(x + 2, centerY - 1, 3, 3);
+    triangle(x + 4, centerY, x + 7, centerY - 4, x + 7, centerY + 4);
+    stroke(255);
+    noFill();
+    if (audible) {
+      arc(x + 7, centerY, 6, 8, -PI / 3, PI / 3);
+    } else {
+      line(x + 8, centerY + 3, x + 10, centerY - 3);
+    }
+    if (hovered) {
+      String label = !sounds.available ? "Sound unavailable" : audible ? "Mute sounds" : "Unmute sounds";
+      textSize(8);
+      fill(0);
+      text(label, min(width - 4, x + SOUND_BUTTON_WIDTH) - textWidth(label), 47);
+    }
+    popStyle();
+  }
+
   boolean overEraser() {
     return overButton(ERASER_X, 3, 32, 36);
   }
@@ -745,7 +806,12 @@ class UIManager {
   void handleMousePress() {
     if (mouseButton != LEFT) return;
     if (overSectionsArrow()) {
+      sounds.play(SoundCue.CLICK);
       toggleSections();
+      return;
+    }
+    if (overSoundButton()) {
+      sounds.toggle();
       return;
     }
     if (dist(mouseX, mouseY, 124, 23) <= 15) {
@@ -758,7 +824,9 @@ class UIManager {
       state.hexInput = "";
     }
 
-    switch (hoveredFileButton()) {
+    int fileButton = hoveredFileButton();
+    if (fileButton >= 0) sounds.play(SoundCue.CLICK);
+    switch (fileButton) {
       case 0: fileManager.selectImageForLoad(false); return;
       case 1: fileManager.saveCustomLocation(); return;
       case 2: fileManager.quickSave(); return;
@@ -783,8 +851,14 @@ class UIManager {
 class ToolManager {
   PGraphics layer;
 
+  boolean hasBrushInk() {
+    if (state.currentTool == ToolType.ERASER) return true;
+    if (state.currentTool == ToolType.IMAGE_PEN && penImage == null) return false;
+    return state.penOpacity > 0;
+  }
+
   void handlePress() {
-    if (state.penOpacity == 0 && state.currentTool != ToolType.ERASER) return;
+    if (!hasBrushInk()) return;
     layer = artwork.activeLayer().pixels;
     // Initial dots or setup for tools
     if (state.currentTool == ToolType.PEN && state.subToolMode == PAPER_PENCIL_MODE) {
@@ -822,7 +896,7 @@ class ToolManager {
   }
 
   void handleDrag() {
-     if (state.penOpacity == 0 && state.currentTool != ToolType.ERASER) return;
+     if (!hasBrushInk()) return;
      layer = artwork.activeLayer().pixels;
      switch(state.currentTool) {
        case PEN: drawPenDrag(); break;

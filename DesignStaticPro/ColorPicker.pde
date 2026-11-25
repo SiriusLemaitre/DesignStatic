@@ -19,6 +19,7 @@ class ColorPicker {
   PImage hueBar;
 
   void show() {
+    sounds.play(SoundCue.CLICK);
     finishStroke();
     artwork.beginEdit();
     open = true;
@@ -122,30 +123,41 @@ class ColorPicker {
     } else if (over(CANCEL_X, BUTTON_Y, BUTTON_WIDTH, BUTTON_HEIGHT)) {
       close(true);
     } else if (over(ALPHA_X - 2, ALPHA_Y - 2, ALPHA_WIDTH + 4, ALPHA_HEIGHT + 4)) {
+      sounds.play(SoundCue.CLICK);
       dragTarget = ALPHA_DRAG;
-      drag();
+      updateDrag(false);
     } else {
       ColorEditor panel = pickerMouseX() < backdrop.x ? pen : backdrop;
       if (over(panel.x + FIELD_X, HEX_Y, HEX_WIDTH, HEX_HEIGHT)) {
+        sounds.play(SoundCue.CLICK);
         hexFocus = panel;
         replaceHex = true;
       } else if (over(panel.x + FIELD_X, FIELD_Y, FIELD_WIDTH, FIELD_HEIGHT)) {
+        sounds.play(SoundCue.CLICK);
         dragging = panel;
         dragTarget = FIELD_DRAG;
-        drag();
+        updateDrag(false);
       } else if (over(panel.x + HUE_X, FIELD_Y, HUE_WIDTH, FIELD_HEIGHT)) {
+        sounds.play(SoundCue.CLICK);
         dragging = panel;
         dragTarget = HUE_DRAG;
-        drag();
+        updateDrag(false);
       }
     }
   }
 
   void drag() {
+    updateDrag(true);
+  }
+
+  void updateDrag(boolean feedback) {
     if (dragTarget == NO_DRAG) return;
     if (dragTarget == ALPHA_DRAG) {
+      int previous = state.penOpacity;
       state.penOpacity = constrain(round((pickerMouseX() - ALPHA_X) * 255.0f / (ALPHA_WIDTH - 1)), 0, 255);
+      if (feedback && state.penOpacity != previous) sounds.adjustment();
     } else {
+      color previous = dragging.currentColor();
       float vertical = constrain((pickerMouseY() - FIELD_Y) / (FIELD_HEIGHT - 1.0f), 0, 1);
       if (dragTarget == FIELD_DRAG) {
         dragging.saturation = constrain((pickerMouseX() - dragging.x - FIELD_X) / (FIELD_WIDTH - 1.0f), 0, 1);
@@ -155,6 +167,7 @@ class ColorPicker {
       }
       dragging.setColor(Color.HSBtoRGB(dragging.hue, dragging.saturation, dragging.brightness));
       dragging.hexValue = hex(dragging.currentColor(), 6);
+      if (feedback && dragging.currentColor() != previous) sounds.adjustment();
     }
     hexFocus = null;
   }
@@ -194,6 +207,7 @@ class ColorPicker {
   }
 
   void close(boolean cancel) {
+    sounds.play(SoundCue.CLICK);
     if (cancel) {
       pen.setColor(pen.originalColor);
       backdrop.setColor(backdrop.originalColor);

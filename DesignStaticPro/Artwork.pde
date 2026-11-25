@@ -360,6 +360,7 @@ class Artwork {
     if (target.restoreBackground) state.bgColor = target.backgroundColor;
     target.restorePixels();
     changed();
+    sounds.play(SoundCue.CLICK);
   }
 
   void remember(ArrayDeque<ArtworkSnapshot> stack, ArtworkSnapshot snapshot) {
