@@ -146,7 +146,7 @@ class SoundEffects {
   }
 
   float[] readScratchRecording() {
-    try (InputStream source = createInput("pencil-scratch.wav")) {
+    try (InputStream source = createInput("sounds/pencil-scratch.wav")) {
       if (source == null) return null;
       try (AudioInputStream recording = AudioSystem.getAudioInputStream(new BufferedInputStream(source))) {
         AudioFormat format = recording.getFormat();
